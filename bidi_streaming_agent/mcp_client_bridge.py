@@ -78,37 +78,62 @@ def create_mcp_bridge_tools(server_script: str) -> List[Callable]:
     # Use sys.executable to ensure the subprocess uses the same virtualenv Python
     python_cmd = sys.executable
 
-    # Helper to securely run an MCP command
+    return _create_tools_from_params(
+        StdioServerParameters(command=python_cmd, args=[abs_script_path]),
+        label=server_script,
+    )
+
+
+def create_mcp_bridge_tools_from_command(
+    command: str, args: Optional[List[str]] = None, env: Optional[dict] = None
+) -> List[Callable]:
+    """
+    Connects to an MCP server launched via an arbitrary command (e.g. npx).
+
+    Args:
+        command: The executable to run (e.g. 'npx', 'leetcode-mcp-server').
+        args:    Command-line arguments for the executable.
+        env:     Optional environment variables passed to the subprocess.
+
+    Returns:
+        List of async callables that the ADK Agent can use as tools.
+    """
+    merged_env = {**os.environ, **(env or {})}
+    return _create_tools_from_params(
+        StdioServerParameters(command=command, args=args or [], env=merged_env),
+        label=f"{command} {' '.join(args or [])}",
+    )
+
+
+def _create_tools_from_params(
+    server_params: StdioServerParameters, label: str
+) -> List[Callable]:
+    """
+    Internal helper: given MCP StdioServerParameters, fetch tools and wrap them.
+    """
+
+    # Helper to run a single MCP tool call
     async def run_mcp_tool(tool_name: str, args: dict) -> str:
-        server_params = StdioServerParameters(
-            command=python_cmd,
-            args=[abs_script_path]
-        )
         async with stdio_client(server_params) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 result = await session.call_tool(tool_name, arguments=args)
-                # Parse the MCP tool result (typically a Content object with text)
                 if result.content and len(result.content) > 0:
                     return result.content[0].text
                 return "Tool executed successfully but returned no output."
 
     # Fetch the list of tools synchronously at import time to build definitions
     async def fetch_tools():
-        server_params = StdioServerParameters(
-            command=python_cmd,
-            args=[abs_script_path]
-        )
         async with stdio_client(server_params) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 return await session.list_tools()
 
     try:
-        print(f"[MCP Bridge] Fetching tools from {server_script}...")
+        print(f"[MCP Bridge] Fetching tools from {label}...")
         mcp_tools = _run_async(fetch_tools())
     except Exception as e:
-        print(f"[MCP Bridge] Failed to fetch tools from {server_script}: {e}")
+        print(f"[MCP Bridge] Failed to fetch tools from {label}: {e}")
         return []
 
     dynamic_tools = []
@@ -132,15 +157,18 @@ def create_mcp_bridge_tools(server_script: str) -> List[Callable]:
         wrapper.__doc__ = doc
         
         # We manually build the signature for ADK's introspection
-        params = []
+        required_params = []
+        optional_params = []
         for prop_name, prop_details in properties.items():
             # Map JSON schema types to Python types
             prop_type = str
             json_type = prop_details.get("type")
-            if json_type == "integer":
+            if json_type == "integer" or json_type == "number":
                 prop_type = int
             elif json_type == "boolean":
                 prop_type = bool
+            elif json_type == "array":
+                prop_type = list
 
             # Handle Optional types (anyOf with null)
             any_of = prop_details.get("anyOf", [])
@@ -155,18 +183,25 @@ def create_mcp_bridge_tools(server_script: str) -> List[Callable]:
 
             # Determine default value
             is_required = prop_name in required_fields
-            default = inspect.Parameter.empty if is_required else prop_details.get("default", inspect.Parameter.empty)
+            if is_required:
+                default = inspect.Parameter.empty
+            else:
+                # Optional params must always have a default for valid signatures
+                default = prop_details.get("default", None)
             
-            params.append(
-                inspect.Parameter(
-                    name=prop_name,
-                    kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                    default=default,
-                    annotation=prop_type
-                )
+            param = inspect.Parameter(
+                name=prop_name,
+                kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                default=default,
+                annotation=prop_type
             )
+            # Sort required params first to satisfy Python signature rules
+            if is_required:
+                required_params.append(param)
+            else:
+                optional_params.append(param)
 
-        wrapper.__signature__ = inspect.Signature(parameters=params)
+        wrapper.__signature__ = inspect.Signature(parameters=required_params + optional_params)
         dynamic_tools.append(wrapper)
 
     print(f"[MCP Bridge] Successfully loaded {len(dynamic_tools)} tools")

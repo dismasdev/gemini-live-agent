@@ -84,7 +84,17 @@ export function useWebSocket() {
 
     const wsRef = useRef<WebSocket | null>(null);
     const partialTextRef = useRef("");
-    const userIdRef = useRef(`user-${crypto.randomUUID().slice(0, 8)}`);
+
+    // Persistent userId — survives page reloads so the agent remembers you
+    const userIdRef = useRef(
+        localStorage.getItem("interview-coach-user-id") ??
+        (() => {
+            const id = `user-${crypto.randomUUID().slice(0, 8)}`;
+            localStorage.setItem("interview-coach-user-id", id);
+            return id;
+        })()
+    );
+    // Fresh session ID per connection
     const sessionIdRef = useRef(`session-${crypto.randomUUID().slice(0, 8)}`);
 
     const [isScreenSharing, setIsScreenSharing] = useState(false);
@@ -388,7 +398,7 @@ export function useWebSocket() {
                 setStatus("connected");
                 reconnectAttemptsRef.current = 0;
                 isConnectingRef.current = false;
-                console.log("[WS] Connected to AI PC Technician agent");
+                console.log("[WS] Connected to Interview Coach agent");
 
                 // Play premium connection chime natively (no audio files needed)
                 try {
@@ -421,6 +431,7 @@ export function useWebSocket() {
                 } catch (e) {
                     console.error("[WS] Failed to play connection sound:", e);
                 }
+
             };
 
             ws.onmessage = (event) => {

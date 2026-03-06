@@ -1,7 +1,7 @@
 """
-AI PC Live Technician — FastAPI WebSocket Server
-=================================================
-This module implements the backend server for the AI PC Live Technician Agent.
+Interview Coach — FastAPI WebSocket Server
+===========================================
+This module implements the backend server for the Interview Coach Agent.
 It uses FastAPI with WebSocket support for real-time bidirectional communication.
 
 Architecture Overview:
@@ -45,7 +45,7 @@ from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-# Import our PC Technician agent
+# Import our Interview Coach agent
 from bidi_streaming_agent.agent import root_agent
 
 # ---------------------------------------------------------------------------
@@ -58,11 +58,11 @@ logger = logging.getLogger(__name__)
 # Phase 1: Application Initialization (once at startup)
 # =========================================================================
 
-APP_NAME = "ai-pc-technician"
+APP_NAME = "interview-coach"
 
 app = FastAPI(
-    title="AI PC Live Technician",
-    description="Real-time AI-powered PC troubleshooting via voice and text",
+    title="Interview Coach — DSA & System Design",
+    description="Real-time AI-powered interview coaching via voice, text, and vision",
     version="1.0.0",
 )
 
@@ -139,7 +139,7 @@ async def websocket_endpoint(
     # Configure streaming behavior
     run_config = RunConfig(
         streaming_mode=StreamingMode.BIDI,
-        response_modalities=["AUDIO"],
+        response_modalities=[types.Modality.AUDIO],
         input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
         session_resumption=types.SessionResumptionConfig(),
@@ -156,6 +156,7 @@ async def websocket_endpoint(
             app_name=APP_NAME,
             user_id=user_id,
             session_id=session_id,
+            state={"user_id": user_id},
         )
         logger.info(f"[SESSION] Created new session: {session_id}")
     else:
@@ -288,6 +289,22 @@ async def websocket_endpoint(
                     break
 
                 # Log key events for debugging
+                if event.content and event.content.parts:
+                    for part in event.content.parts:
+                        if part.inline_data:
+                            logger.info(f"[DOWNSTREAM] Audio chunk: {part.inline_data.mime_type}, {len(part.inline_data.data) if part.inline_data.data else 0} bytes")
+                        if part.text:
+                            logger.info(f"[DOWNSTREAM] Text: {part.text[:80]}")
+                        if part.function_call:
+                            logger.info(f"[DOWNSTREAM] Tool call: {part.function_call.name}")
+
+                # Log first event JSON structure for debugging
+                if not hasattr(downstream_task, '_logged_first'):
+                    downstream_task._logged_first = True
+                    event_sample = event.model_dump_json(exclude_none=True, by_alias=True)
+                    # Show first 500 chars to see JSON key names
+                    logger.info(f"[DOWNSTREAM] Sample event JSON keys: {event_sample[:500]}")
+                    
                 if event.turn_complete:
                     logger.info("[DOWNSTREAM] Turn complete")
                 if event.interrupted:

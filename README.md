@@ -1,17 +1,18 @@
-# Nora — AI Live Technician
+# Interview Coach — DSA & System Design
 
 > 🏆 **Google Live Agent Hackathon Submission**
 > **Category:** Live Agents 🗣️
-> An advanced multimodal AI technician that can **See, Hear, Speak, and Act** to help users troubleshoot PC issues in real-time with graceful interruption capabilities.
+> An advanced multimodal AI interview coach that can **See, Hear, Speak, and Act** to train candidates for developer jobs at top tech companies through interactive mock interviews.
 
 ## 🚀 Overview
 
-Nora is not just a chatbot; it's a Live Technician. Built using the **Google ADK (Agent Development Kit)** and the **Gemini Live API**, Nora allows users to:
-- Talk naturally about their computer problems via real-time bidirectional audio.
-- Share their screen or upload error screenshots.
-- Grant the AI access to run safe, whitelisted **CLI diagnostic commands** directly on their machine.
+Interview Coach is not just a chatbot; it's a **live, interactive interview trainer**. Built using the **Google ADK (Agent Development Kit)** and the **Gemini Live API**, it allows candidates to:
+- Practice DSA and System Design interviews through real-time bidirectional voice conversation.
+- Share their screen while coding or upload photos of whiteboard sketches.
+- Draw system design diagrams on a built-in whiteboard canvas and get instant visual feedback.
+- Have their Python code **executed and validated in real-time** by the agent.
 
-The agent automatically detects whether the user is running **macOS** or **Windows** and seamlessly loads a tailored suite of troubleshooting tools (ping, DNS checks, system info, disk health, etc.) to diagnose issues without asking manual questions.
+The agent uses a **Socratic teaching method** — asking guiding questions, giving progressive hints, and correcting mistakes rather than simply providing answers.
 
 ---
 
@@ -19,11 +20,13 @@ The agent automatically detects whether the user is running **macOS** or **Windo
 
 | Capability | How It Works |
 |:---:|---|
-| 👂 **Hear** | Real-time voice streaming at 16kHz PCM. The user can speak naturally, and the agent listens continuously. |
-| 🗣️ **Speak** | The agent responds with natural, sub-second latency voice (24kHz PCM) powered by Gemini 2.5 Flash Native Audio. |
-| 👁️ **See** | Users can share their screen, drag-and-drop images, or upload screenshots. The agent reads error codes, BSOD screens, and UI elements to provide visual context. |
-| 🛠️ **Act (CLI Tools)** | The backend auto-detects the host OS and equips the agent with up to 20 OS-specific CLI tools (e.g., `ipconfig`, `system_profiler`, `sfc /scannow`). The agent runs these proactively to gather system data. |
-| 🛑 **Graceful Interruption** | A core hackathon requirement: users can interrupt the agent mid-sentence simply by speaking over it or clicking the mic. The system instantly clears audio buffers and coordinates backend cancellation events to handle the interruption smoothly. |
+| 👂 **Hear** | Real-time voice streaming at 16kHz PCM. The candidate speaks their thought process naturally, just like in a real interview. |
+| 🗣️ **Speak** | The coach responds with natural, sub-second latency voice (24kHz PCM) — asking follow-ups, giving hints, and correcting mistakes. |
+| 👁️ **See** | Candidates can share their screen showing code in an IDE, upload photos, or use the built-in whiteboard to draw system design diagrams. The coach reads code, examines diagrams, and gives specific visual feedback. |
+| 🛠️ **Act (Code Execution)** | The agent can execute Python code via an MCP server to validate candidate solutions against test cases in real-time. |
+| ✏️ **Whiteboard** | Built-in drawing canvas for system design sketches — draw components, arrows, and diagrams, then send to the coach for review. |
+| 🛑 **Graceful Interruption** | Candidates can interrupt the coach mid-sentence simply by speaking over it. The system instantly clears audio buffers and handles the interruption smoothly — just like a real conversation. |
+| 🧠 **Adaptive Coaching** | The coach adjusts difficulty based on performance. Struggling? More scaffolding. Crushing it? Harder problems and deeper follow-ups. |
 
 ---
 
@@ -37,9 +40,9 @@ The application consists of a **React frontend**, a **FastAPI WebSocket backend*
 │                   React + Vite + Shadcn/UI                               │
 │                                                                          │
 │  ┌──────────────┐  ┌────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │ ChatInterface│  │VoiceButton │  │Activity Log  │  │Image Upload  │  │
-│  │ Messages,    │  │ Mic toggle │  │ Live MCP     │  │ File picker, │  │
-│  │ text input   │  │ with pulse │  │ tracking UI  │  │ screen cap   │  │
+│  │ ChatInterface│  │VoiceButton │  │Activity Log  │  │  Whiteboard  │  │
+│  │ Messages,    │  │ Mic toggle │  │ Live MCP     │  │  Canvas for  │  │
+│  │ text input   │  │ with pulse │  │ tracking UI  │  │  diagrams    │  │
 │  └──────┬───────┘  └─────┬──────┘  └──────┬───────┘  └──────┬───────┘  │
 │         │                │                 │                  │          │
 │         └────────────────┼─────────────────┼──────────────────┘          │
@@ -74,28 +77,32 @@ The application consists of a **React frontend**, a **FastAPI WebSocket backend*
 │  └─────────────────────┬───────────────────┘                             │
 │                        │                                                 │
 │  ┌─────────────────────▼─────────────────────────────────────────────┐   │
-│  │                      Root Agent (Nora)                             │   │
-│  │           Acts as universal MCP Tool Client                        │   │
-│  └─────────────────────┬─────────────────┬───────────┬───────────────┘   │
-│                        │                 │           │                   │
-│               MCP      │        MCP      │     MCP   │                   │
-│               Protocol │        Protocol │     Proto │                   │
-│  ┌─────────────────────▼──┐ ┌────────────▼───┐ ┌─────▼──────────────┐    │
-│  │    MacTechnicianMCP    │ │WindowsTechMCP  │ │  Android Node      │    │
-│  │    (FastMCP Server)    │ │(FastMCP Server)│ │  (Soon)            │    │
-│  │    - ping, dns         │ │- sfc, ipconfig │ │  - battery, sms    │    │
-│  │    - flush_dns         │ │- event_logs    │ │  - camera.snap     │    │
-│  └────────────────────────┘ └────────────────┘ └────────────────────┘    │
+│  │                  Root Agent (Interview Coach)                      │   │
+│  │             Acts as MCP Tool Client + Google Search                │   │
+│  └─────────────┬──────────────────────────────┬──────────────────────┘   │
+│                │                              │                          │
+│       MCP      │                     MCP      │                          │
+│       Protocol │                     Protocol │                          │
+│  ┌─────────────▼──────────────────┐ ┌─────────▼──────────────────────┐   │
+│  │  LeetCode MCP Server           │ │  CodeExec MCP (FastMCP)        │   │
+│  │  (@jinzcdev/leetcode-mcp)      │ │  - run_python_code             │   │
+│  │  - get_daily_challenge         │ │    (execute & validate          │   │
+│  │  - get_problem                 │ │     candidate solutions)        │   │
+│  │  - search_problems             │ └────────────────────────────────┘   │
+│  │  - list_problem_solutions      │                                      │
+│  │  - get_problem_solution        │                                      │
+│  │  + user profile/submission tools│                                     │
+│  └────────────────────────────────┘                                      │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 1. Modular MCP Architecture
-To support real-time bidi streaming while granting secure, modular system access, the agent's architecture uses the **Model Context Protocol (MCP)**:
+The agent uses the **Model Context Protocol (MCP)** for its tool capabilities, connecting to **two** MCP servers:
 
-1. **OS Detection:** The FastAPI server uses `platform.system()` to detect the host environment.
-2. **MCP Server Spawning:** The agent dynamically identifies the correct OS-specific FastMCP server (e.g., `mac_mcp_server.py`).
-3. **Dynamic Bridge:** Using the `MCP Client Bridge`, Nora spawns the server as a background subprocess and dynamically fetches tools over the **stdio** protocol. This makes the agent completely modular — adding support for a new platform like Linux or Android is as simple as creating a new MCP server without touching the core agent logic.
-4. **Prompt Adjustments:** The detected OS and tool capabilities are injected directly into the Gemini instruction prompt.
+1. **LeetCode MCP Server** ([`@jinzcdev/leetcode-mcp-server`](https://github.com/jinzcdev/leetcode-mcp-server)): A community MCP server that provides direct access to LeetCode's problem database via their GraphQL API. The agent can search problems by difficulty/tags, fetch full problem details, get daily challenges, and retrieve community solutions — all from real LeetCode data.
+2. **Code Execution MCP Server** (local FastMCP): A lightweight local server that provides sandboxed Python code execution for validating candidate solutions in real-time.
+3. **Dynamic Bridge**: The `MCP Client Bridge` spawns both servers as subprocesses and dynamically fetches tools over the **stdio** protocol. Adding new MCP servers is as simple as adding a new `create_mcp_bridge_tools_from_command()` call.
+4. **Google Search**: The agent also has access to Google Search for looking up algorithms, design patterns, and concepts in real-time.
 
 ### 2. WebSocket & Interruption Flow
 Graceful interruptions require precise coordination across the full stack:
@@ -113,14 +120,10 @@ Google_Hackathon/
 ├── requirements.txt            # Python dependencies
 │
 ├── bidi_streaming_agent/       # Google ADK Agent Code
-│   ├── agent.py                # Root agent: Persona, MCP Client loading
-│   ├── mcp_client_bridge.py    # Bridge: Spawns MCP server & dynamically wraps tools
-│   ├── mcp_servers/            # Standalone FastMCP servers
-│   │   ├── mac_mcp_server.py   # macOS FastMCP entry point
-│   │   └── windows_mcp_server.py # Windows FastMCP entry point
-│   └── tools/                  # Underlying CLI implementation logic
-│       ├── mac_tools.py        # 17 safe CLI tools for macOS (with output truncation)
-│       └── windows_tools.py    # 20 safe CLI tools for Windows (with output truncation)
+│   ├── agent.py                # Root agent: Interview Coach persona, dual MCP Client loading
+│   ├── mcp_client_bridge.py    # Bridge: Spawns MCP servers (Python & Node.js) & wraps tools
+│   └── mcp_servers/
+│       └── interview_mcp_server.py  # FastMCP server for code execution
 │
 ├── app/
 │   └── main.py                 # FastAPI WebSocket server (session & interrupt mgmt)
@@ -131,15 +134,14 @@ Google_Hackathon/
         │   ├── useWebSocket.ts      # WS lifecycle, streaming, interruption handling
         │   └── useAudioRecorder.ts  # Mic capture via AudioWorklet (16kHz PCM)
         └── components/
-            ├── ChatInterface.tsx    # Main UI (Messages, Mic toggle, Screen Share)
+            ├── ChatInterface.tsx    # Main UI (Chat, Voice, Whiteboard, Activity Log)
+            ├── Whiteboard.tsx       # Canvas drawing tool for system design diagrams
             └── ui/                  # Shadcn UI primitives
 ```
 
 ---
 
 ## 🛠️ Spin-Up Instructions (For Judges)
-
-The project requires a local environment to allow the agent access to CLI diagnostic tools.
 
 ### Prerequisites
 - Python 3.10+
@@ -157,12 +159,16 @@ The project requires a local environment to allow the agent access to CLI diagno
    ```bash
    pip install -r requirements.txt
    ```
-4. Set up your `.env` file in the root directory:
+4. Install the LeetCode MCP server (requires Node.js):
+   ```bash
+   npm install -g @jinzcdev/leetcode-mcp-server
+   ```
+5. Set up your `.env` file in the root directory:
    ```env
    GEMINI_API_KEY="your_api_key_here"
    DEMO_AGENT_MODEL="gemini-2.5-flash-native-audio-preview-12-2025"
    ```
-5. Start the FastAPI server:
+6. Start the FastAPI server:
    ```bash
    python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
    ```
@@ -180,17 +186,17 @@ The project requires a local environment to allow the agent access to CLI diagno
    ```bash
    pnpm run dev
    ```
-4. Open your browser to `http://localhost:5173`. Click the microphone icon to connect to the Live API and start talking!
+4. Open your browser to `http://localhost:5173`. Click the microphone icon to start a coaching session and begin practicing!
 
 ---
 
 ## ☁️ Google Cloud Deployment Notes
 
-While this specific application is designed to run locally to allow the AI access to the user's *local* CLI tools for PC troubleshooting, the backend infrastructure itself leverages Google Cloud.
+The backend infrastructure leverages Google Cloud for all AI capabilities.
 
 **How it uses Google Cloud:**
 - **Google ADK & Vertex AI/Gemini API:** The core intelligence and multimodal live streaming are powered completely by Google's cloud infrastructure via the Gemini Live API endpoint.
-- **Production Deployment Strategy:** In a production scenario, the FastAPI backend acts as a signaling server and can be deployed via **Google Cloud Run** using a Dockerfile. The local CLI tools would be packaged into a lightweight, downloadable client daemon (e.g., using PyInstaller) that connects via WebSocket to the Cloud Run backend, maintaining strict security and isolation.
+- **Production Deployment Strategy:** In a production scenario, the FastAPI backend can be deployed via **Google Cloud Run** using a Dockerfile. The code execution sandbox would run in an isolated container for security, and the frontend would be served via Cloud CDN.
 
 ---
 
@@ -200,4 +206,5 @@ While this specific application is designed to run locally to allow the AI acces
 - **AI Model:** Gemini 2.5 Flash Native Audio (bidi streaming API)
 - **Backend:** Python, FastAPI, Uvicorn, WebSockets, `asyncio`
 - **Frontend:** React 19, Vite, TypeScript, Tailwind CSS v4, Shadcn/UI
-- **Browser APIs:** Web Audio API, AudioWorklet (raw PCM conversion), Screen Capture API
+- **Browser APIs:** Web Audio API, AudioWorklet (raw PCM conversion), Screen Capture API, Canvas API
+- **Tooling:** MCP (Model Context Protocol), FastMCP, [@jinzcdev/leetcode-mcp-server](https://github.com/jinzcdev/leetcode-mcp-server), Google Search
