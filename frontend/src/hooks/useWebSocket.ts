@@ -71,26 +71,30 @@ export interface ToolCallActivity {
     status: 'executing' | 'completed';
 }
 
+export type VisualShareMode = "screen" | "camera" | null;
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
 
 export function useWebSocket() {
+    const configuredBackendOrigin = (import.meta.env.VITE_BACKEND_ORIGIN as string | undefined)?.trim();
     const [status, setStatus] = useState<ConnectionStatus>("disconnected");
     const [messages, setMessages] = useState<Message[]>([]);
     const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
     const [currentTranscription, setCurrentTranscription] = useState("");
     const [activities, setActivities] = useState<ToolCallActivity[]>([]);
+    const [latestToolCallName, setLatestToolCallName] = useState<string | null>(null);
 
     const wsRef = useRef<WebSocket | null>(null);
     const partialTextRef = useRef("");
 
     // Persistent userId — survives page reloads so the agent remembers you
     const userIdRef = useRef(
-        localStorage.getItem("interview-coach-user-id") ??
+        localStorage.getItem("nora-user-id") ??
         (() => {
             const id = `user-${crypto.randomUUID().slice(0, 8)}`;
-            localStorage.setItem("interview-coach-user-id", id);
+            localStorage.setItem("nora-user-id", id);
             return id;
         })()
     );
@@ -98,6 +102,7 @@ export function useWebSocket() {
     const sessionIdRef = useRef(`session-${crypto.randomUUID().slice(0, 8)}`);
 
     const [isScreenSharing, setIsScreenSharing] = useState(false);
+    const [visualShareMode, setVisualShareMode] = useState<VisualShareMode>(null);
     const screenStreamRef = useRef<MediaStream | null>(null);
     const screenIntervalRef = useRef<number | null>(null);
 
@@ -283,6 +288,7 @@ export function useWebSocket() {
                     // Check for function calls
                     if (part.functionCall?.name) {
                         const functionName = part.functionCall.name;
+                        setLatestToolCallName(functionName);
                         setActivities((prev) => [...prev, {
                             id: crypto.randomUUID(),
                             name: functionName,
@@ -387,8 +393,12 @@ export function useWebSocket() {
 
         await initAudioPlayer();
 
-        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const wsUrl = `${protocol}//${window.location.host}/ws/${userIdRef.current}/${sessionIdRef.current}`;
+        const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const defaultWsBase = `${wsProtocol}//${window.location.host}`;
+        const wsBase = configuredBackendOrigin
+            ? configuredBackendOrigin.replace(/^http:/, "ws:").replace(/^https:/, "wss:")
+            : defaultWsBase;
+        const wsUrl = `${wsBase}/ws/${userIdRef.current}/${sessionIdRef.current}`;
 
         try {
             const ws = new WebSocket(wsUrl);
@@ -398,7 +408,7 @@ export function useWebSocket() {
                 setStatus("connected");
                 reconnectAttemptsRef.current = 0;
                 isConnectingRef.current = false;
-                console.log("[WS] Connected to Interview Coach agent");
+                console.log("[WS] Connected to Nora agent");
 
                 // Play premium connection chime natively (no audio files needed)
                 try {
@@ -501,7 +511,7 @@ export function useWebSocket() {
             isConnectingRef.current = false;
             setStatus("error");
         }
-    }, [handleEvent, initAudioPlayer, clearReconnectTimer]);
+    }, [handleEvent, initAudioPlayer, clearReconnectTimer, configuredBackendOrigin]);
 
     // -----------------------------------------------------------------------
     // Disconnect
@@ -543,6 +553,7 @@ export function useWebSocket() {
             screenStreamRef.current = null;
         }
         setIsScreenSharing(false);
+        setVisualShareMode(null);
     }, [clearReconnectTimer]);
 
     // -----------------------------------------------------------------------
@@ -635,10 +646,88 @@ export function useWebSocket() {
             screenStreamRef.current = null;
         }
         setIsScreenSharing(false);
+        setVisualShareMode(null);
     }, []);
 
+    const startCameraShare = useCallback(async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: {
+                    facingMode: { ideal: "environment" },
+                },
+                audio: false,
+            });
+
+            screenStreamRef.current = stream;
+            setIsScreenSharing(true);
+            setVisualShareMode("camera");
+
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+                sendText("Screen sharing is unavailable, so I am sharing live camera feed for visual code/bug analysis.");
+            }
+
+            const video = document.createElement("video");
+            video.srcObject = stream;
+            video.muted = true;
+            await video.play();
+
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d")!;
+
+            screenIntervalRef.current = window.setInterval(async () => {
+                if (!screenStreamRef.current?.active) {
+                    stopScreenShare();
+                    return;
+                }
+
+                // Prevent visual frame spam from interrupting active speech turns.
+                if (isAgentSpeaking) return;
+
+                if (!video.videoWidth || !video.videoHeight) return;
+
+                canvas.width = Math.min(video.videoWidth, 1280);
+                canvas.height = Math.min(
+                    video.videoHeight,
+                    Math.round((1280 / video.videoWidth) * video.videoHeight)
+                );
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                const blob = await new Promise<Blob>((resolve) =>
+                    canvas.toBlob((b) => resolve(b!), "image/jpeg", 0.5)
+                );
+
+                const base64Data = await new Promise<string>((resolve) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve((reader.result as string).split(",")[1]);
+                    reader.readAsDataURL(blob);
+                });
+
+                if (wsRef.current?.readyState === WebSocket.OPEN) {
+                    wsRef.current.send(
+                        JSON.stringify({
+                            type: "image",
+                            data: base64Data,
+                            mimeType: "image/jpeg",
+                        })
+                    );
+                }
+            }, 5000);
+
+            stream.getVideoTracks()[0].onended = () => {
+                stopScreenShare();
+            };
+        } catch (err) {
+            console.error("Camera share failed:", err);
+            setIsScreenSharing(false);
+            setVisualShareMode(null);
+        }
+    }, [sendText, stopScreenShare, isAgentSpeaking]);
+
     const startScreenShare = useCallback(async () => {
-        if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+        if (!navigator.mediaDevices?.getDisplayMedia) {
+            await startCameraShare();
+            return;
+        }
 
         try {
             const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -647,8 +736,11 @@ export function useWebSocket() {
 
             screenStreamRef.current = stream;
             setIsScreenSharing(true);
+            setVisualShareMode("screen");
 
-            sendText("I am sharing my screen now.");
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+                sendText("I am sharing my screen now.");
+            }
 
             const video = document.createElement("video");
             video.srcObject = stream;
@@ -663,6 +755,9 @@ export function useWebSocket() {
                     stopScreenShare();
                     return;
                 }
+
+                // Prevent visual frame spam from interrupting active speech turns.
+                if (isAgentSpeaking) return;
 
                 canvas.width = Math.min(video.videoWidth, 1280);
                 canvas.height = Math.min(
@@ -681,24 +776,26 @@ export function useWebSocket() {
                     r.readAsDataURL(blob);
                 });
 
-                wsRef.current?.send(
-                    JSON.stringify({
-                        type: "image",
-                        data: base64Data,
-                        mimeType: "image/jpeg",
-                    })
-                );
-            }, 2000);
+                if (wsRef.current?.readyState === WebSocket.OPEN) {
+                    wsRef.current.send(
+                        JSON.stringify({
+                            type: "image",
+                            data: base64Data,
+                            mimeType: "image/jpeg",
+                        })
+                    );
+                }
+            }, 5000);
 
             // Handle user stopping screen share via browser UI
             stream.getVideoTracks()[0].onended = () => {
                 stopScreenShare();
             };
         } catch (err) {
-            console.error("Screen share failed:", err);
-            setIsScreenSharing(false);
+            console.error("Screen share failed, trying camera fallback:", err);
+            await startCameraShare();
         }
-    }, [sendText, stopScreenShare]);
+    }, [sendText, stopScreenShare, startCameraShare, isAgentSpeaking]);
 
     const toggleScreenShare = useCallback(() => {
         if (isScreenSharing) stopScreenShare();
@@ -747,6 +844,7 @@ export function useWebSocket() {
         isAgentSpeaking,
         currentTranscription,
         activities,
+        latestToolCallName,
         connect,
         disconnect,
         sendText,
@@ -755,5 +853,6 @@ export function useWebSocket() {
         interruptAgent,
         toggleScreenShare,
         isScreenSharing,
+        visualShareMode,
     };
 }

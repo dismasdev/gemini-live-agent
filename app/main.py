@@ -1,7 +1,7 @@
 """
-Interview Coach — FastAPI WebSocket Server
-===========================================
-This module implements the backend server for the Interview Coach Agent.
+Nora Assistant — FastAPI WebSocket Server
+=========================================
+This module implements the backend server for the Nora conversational agent.
 It uses FastAPI with WebSocket support for real-time bidirectional communication.
 
 Architecture Overview:
@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import uuid
+from typing import Optional
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -38,6 +39,9 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from google.adk.runners import Runner
 from google.adk.agents.run_config import RunConfig, StreamingMode
@@ -45,8 +49,13 @@ from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-# Import our Interview Coach agent
+# Import our Nora agent
 from bidi_streaming_agent.agent import root_agent
+from bidi_streaming_agent.idea_tools import (
+    fetch_saved_ideas,
+    store_idea_evaluation,
+    init_idea_db,
+)
 
 # ---------------------------------------------------------------------------
 # Logging Configuration
@@ -58,13 +67,15 @@ logger = logging.getLogger(__name__)
 # Phase 1: Application Initialization (once at startup)
 # =========================================================================
 
-APP_NAME = "interview-coach"
+APP_NAME = "nora-assistant"
 
 app = FastAPI(
-    title="Interview Coach — DSA & System Design",
-    description="Real-time AI-powered interview coaching via voice, text, and vision",
+    title="Nora Assistant — Idea & Code Copilot",
+    description="Real-time AI assistant for product ideas, competition checks, and code analysis",
     version="1.0.0",
 )
+
+FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 
 # CORS — allow the Vite dev server to connect
 app.add_middleware(
@@ -75,6 +86,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+if FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+
 # Session service — stores conversation history (in-memory for dev)
 session_service = InMemorySessionService()
 
@@ -84,6 +98,18 @@ runner = Runner(
     agent=root_agent,
     session_service=session_service,
 )
+
+init_idea_db()
+
+
+class IdeaCreateRequest(BaseModel):
+    idea_text: str = Field(min_length=3)
+    relevancy_score: float = Field(ge=0, le=10)
+    potential_impact_score: float = Field(ge=0, le=10)
+    competition_found: bool = False
+    competition_summary: str = ""
+    google_search_notes: str = ""
+    submitted_by: Optional[str] = "api-user"
 
 
 # =========================================================================
@@ -98,6 +124,49 @@ async def health_check():
         "agent": root_agent.name,
         "model": root_agent.model,
     }
+
+
+@app.get("/ideas")
+async def get_ideas(limit: int = 20):
+    """List recently stored product ideas and metrics."""
+    return {"ideas": fetch_saved_ideas(limit=limit)}
+
+
+@app.post("/ideas")
+async def create_idea(payload: IdeaCreateRequest):
+    """Persist a product idea and return confirmation text."""
+    result = store_idea_evaluation(
+        idea_text=payload.idea_text,
+        relevancy_score=payload.relevancy_score,
+        potential_impact_score=payload.potential_impact_score,
+        competition_found=payload.competition_found,
+        competition_summary=payload.competition_summary,
+        google_search_notes=payload.google_search_notes,
+        submitted_by=payload.submitted_by or "api-user",
+    )
+    return {"status": "ok", "message": result}
+
+
+@app.get("/")
+async def index_page():
+    """Serve frontend SPA index when bundled in container."""
+    index_file = FRONTEND_DIST / "index.html"
+    if index_file.exists():
+        return FileResponse(index_file)
+    return {"message": "Frontend build not found. Run frontend build first."}
+
+
+@app.get("/{full_path:path}")
+async def spa_fallback(full_path: str):
+    """Fallback for client-side routes in the SPA."""
+    # Avoid capturing API and WS endpoints.
+    if full_path.startswith("ws/") or full_path.startswith("ideas") or full_path == "health":
+        return {"detail": "Not Found"}
+
+    index_file = FRONTEND_DIST / "index.html"
+    if index_file.exists():
+        return FileResponse(index_file)
+    return {"message": "Frontend build not found. Run frontend build first."}
 
 
 # =========================================================================

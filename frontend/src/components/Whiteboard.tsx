@@ -1,9 +1,9 @@
 /**
- * Whiteboard Component — Drawing Canvas for System Design
+ * Whiteboard Component — Drawing Canvas for Ideas and Architecture
  * ========================================================
- * A simple drawing canvas where candidates can sketch system design
- * diagrams, data structures, or algorithm visualizations. The canvas
- * content can be captured and sent to the AI coach as an image.
+ * A simple drawing canvas where users can sketch product ideas,
+ * architecture diagrams, or debugging notes. The canvas content can
+ * be captured and sent to Nora as an image.
  */
 
 import { useRef, useState, useCallback, useEffect } from "react";
@@ -325,7 +325,7 @@ export function Whiteboard({ onSendImage, onClose }: WhiteboardProps) {
                         className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-violet-500 to-indigo-500 hover:from-violet-400 hover:to-indigo-400 text-white text-sm font-medium rounded-xl shadow-[0_0_20px_rgba(139,92,246,0.3)] transition-all"
                     >
                         <Send className="w-4 h-4" />
-                        Send to Coach
+                        Analyze Canvas
                     </button>
                 </div>
             </div>

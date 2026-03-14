@@ -40,18 +40,18 @@ from google.adk.tools import google_search
 
 from bidi_streaming_agent.mcp_client_bridge import (
     create_mcp_bridge_tools,
-    create_mcp_bridge_tools_from_command,
+)
+from bidi_streaming_agent.idea_tools import (
+    store_idea_evaluation,
+    list_saved_ideas,
+    score_idea_metrics,
+    analyze_code_for_bugs,
 )
 
 # ---------------------------------------------------------------------------
-# 1. LeetCode MCP Server — real problems from LeetCode's database
+# LeetCode integration disabled in Nora idea-focused mode
 # ---------------------------------------------------------------------------
-print("[Agent] Connecting to LeetCode MCP Server...")
-_leetcode_tools = create_mcp_bridge_tools_from_command(
-    command="leetcode-mcp-server",
-    args=["--site", "global"],
-)
-print(f"[Agent] Loaded {len(_leetcode_tools)} tools from LeetCode MCP server")
+_leetcode_tools = []
 
 # ---------------------------------------------------------------------------
 # 2. Code Execution MCP Server — run_python_code for validating solutions
@@ -62,7 +62,13 @@ _code_tools = create_mcp_bridge_tools(CODE_EXEC_MCP)
 print(f"[Agent] Loaded {len(_code_tools)} tools from Code Execution MCP server")
 
 # Combine all tools
-_all_tools = [google_search] + _leetcode_tools + _code_tools
+_all_tools = [
+    google_search,
+    score_idea_metrics,
+    store_idea_evaluation,
+    list_saved_ideas,
+    analyze_code_for_bugs,
+] + _code_tools
 
 # ---------------------------------------------------------------------------
 # Interview Coach Root Agent Instruction Prompt
@@ -111,6 +117,29 @@ When stuck, ask: "What's the brute force?" Build from what they already know.
 - **recall_session_notes** — call at session START with user_id
 - **save_session_notes** — call at session END with summary
 - **google_search** — research concepts
+- **score_idea_metrics** — estimate relevancy and impact scores
+- **store_idea_evaluation** — persist idea + metrics in SQLite
+- **list_saved_ideas** — fetch recently stored ideas
+- **analyze_code_for_bugs** — quick bug/security scan for pasted code
+
+## Product-Idea Workflow
+When user asks to evaluate or save an idea, do this in order:
+1) Use **google_search** with a focused query to check who is already doing it.
+2) Use **score_idea_metrics** if user didn't provide explicit scores.
+3) Use **store_idea_evaluation** with:
+    - relevancy_score
+    - potential_impact_score
+    - competition_found
+    - competition_summary
+    - google_search_notes
+4) Report the stored idea id and a short recommendation.
+
+If the user asks to review previous ideas, call **list_saved_ideas**.
+
+## Code Review Workflow
+If user shares code (text or from screenshots/screen share), provide a concise bug review.
+When code is provided as text, call **analyze_code_for_bugs** and summarize findings by severity.
+For visual code from screen share/images, inspect carefully and highlight likely logic bugs, edge cases, and security risks.
 
 ## Rules
 - FIRST thing every session: call recall_session_notes with user_id. Greet warmly,
@@ -124,11 +153,44 @@ When stuck, ask: "What's the brute force?" Build from what they already know.
 user_id: `{user_id}`
 """
 
+NORA_AGENT_INSTRUCTION = """
+You are Nora, a conversational AI product copilot focused on idea evaluation,
+market validation, and code quality feedback.
+
+## Communication style
+- Friendly, concise, and practical.
+- Voice responses should be short (2-4 sentences).
+- Ask one useful follow-up question when requirements are unclear.
+
+## Core responsibilities
+1) Evaluate product ideas using relevancy, potential impact, and competition checks.
+2) Save ideas and metrics for later retrieval.
+3) Analyze code for bugs/security risks from pasted code or visual context.
+4) Use google_search when user asks for market/competitor evidence.
+
+## Tools
+- score_idea_metrics
+- store_idea_evaluation
+- list_saved_ideas
+- analyze_code_for_bugs
+- google_search
+- run_python_code (optional quick execution check)
+
+## Workflow rules
+- For idea assessment: search competition, score, store, summarize recommendation.
+- For past ideas: call list_saved_ideas.
+- For code review: call analyze_code_for_bugs and summarize by severity.
+- Never reveal internal chain-of-thought.
+
+## Session context
+user_id: `{user_id}`
+"""
+
 
 def _build_instruction(context) -> str:
     """Dynamically inject the user_id from session state into the instruction."""
     user_id = context.state.get("user_id", "unknown")
-    return INTERVIEW_COACH_INSTRUCTION.format(user_id=user_id)
+    return NORA_AGENT_INSTRUCTION.format(user_id=user_id)
 
 
 # ---------------------------------------------------------------------------
@@ -139,12 +201,10 @@ root_agent = Agent(
         "DEMO_AGENT_MODEL",
         "gemini-2.5-flash-native-audio-preview-12-2025",
     ),
-    name="interview_coach_agent",
+    name="nora_idea_agent",
     description=(
-        "A friendly tech mentor and interview coach specializing in DSA and "
-        "System Design. Great at casual conversation, career advice, and "
-        "interactive mock interviews with real-time voice, vision, and "
-        "code execution capabilities."
+        "Nora: conversational copilot for idea scoring, competition validation, "
+        "and code bug analysis using voice, text, and visual context."
     ),
     instruction=_build_instruction,
     tools=_all_tools,
