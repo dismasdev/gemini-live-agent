@@ -1,0 +1,77 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gemini-live-agent-01
+  REGION: us-central1
+  SERVICE: opencolabo
+  AR_REPOSITORY: opencolabo-repo
+  IMAGE_NAME: opencolabo
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Ensure required APIs are enabled
+        run: |
+          gcloud services enable \
+            run.googleapis.com \
+            cloudbuild.googleapis.com \
+            artifactregistry.googleapis.com \
+            secretmanager.googleapis.com
+
+      - name: Ensure Artifact Registry repository exists
+        run: |
+          gcloud artifacts repositories describe "$AR_REPOSITORY" \
+            --location "$REGION" >/dev/null 2>&1 || \
+          gcloud artifacts repositories create "$AR_REPOSITORY" \
+            --repository-format docker \
+            --location "$REGION" \
+            --description "Container images for $SERVICE"
+
+      - name: Build image with Cloud Build
+        id: build
+        run: |
+          IMAGE_URI="$REGION-docker.pkg.dev/$PROJECT_ID/$AR_REPOSITORY/$IMAGE_NAME:${GITHUB_SHA}"
+          gcloud builds submit --tag "$IMAGE_URI" .
+          echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --image "${{ steps.build.outputs.image_uri }}" \
+            --region "$REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --set-env-vars "GOOGLE_GENAI_USE_VERTEX_AI=FALSE,DEMO_AGENT_MODEL=gemini-2.5-flash-native-audio-preview-12-2025" \
+            --set-secrets "GOOGLE_API_KEY=GOOGLE_API_KEY:latest"
+
+      - name: Output service URL
+        run: |
+          gcloud run services describe "$SERVICE" \
+            --region "$REGION" \
+            --format='value(status.url)'
