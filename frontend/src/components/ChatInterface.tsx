@@ -24,6 +24,8 @@ import { Orb } from "@/components/ui/orb";
 import { Whiteboard } from "@/components/Whiteboard";
 import { IdeaDropAnimation } from "@/components/IdeaDropAnimation";
 
+type UiScene = "focus" | "scan" | "diagnose" | "vault";
+
 export function ChatInterface() {
     const configuredBackendOrigin = (import.meta.env.VITE_BACKEND_ORIGIN as string | undefined)?.trim();
     const [inputMode, setInputMode] = useState<"voice" | "text">("voice");
@@ -33,6 +35,7 @@ export function ChatInterface() {
     const [showWhiteboard, setShowWhiteboard] = useState(false);
     const [savedIdeas, setSavedIdeas] = useState<string[]>([]);
     const [ideaDropTrigger, setIdeaDropTrigger] = useState(0);
+    const [uiScene, setUiScene] = useState<UiScene>("focus");
 
     const {
         status,
@@ -48,6 +51,7 @@ export function ChatInterface() {
         sendImage,
         interruptAgent,
         toggleScreenShare,
+        requestScreenCodeReview,
         isScreenSharing,
         visualShareMode,
     } = useWebSocket();
@@ -132,6 +136,33 @@ export function ChatInterface() {
         });
     }, [latestToolCallName, loadSavedIdeas]);
 
+    useEffect(() => {
+        if (!latestToolCallName) return;
+        if (latestToolCallName === "google_search") {
+            setUiScene("scan");
+            return;
+        }
+        if (latestToolCallName === "analyze_code_for_bugs" || latestToolCallName === "run_python_code") {
+            setUiScene("diagnose");
+            return;
+        }
+        if (
+            latestToolCallName === "store_idea_evaluation" ||
+            latestToolCallName === "list_saved_ideas" ||
+            latestToolCallName === "score_idea_metrics"
+        ) {
+            setUiScene("vault");
+            return;
+        }
+        setUiScene("focus");
+    }, [latestToolCallName]);
+
+    useEffect(() => {
+        if (isAgentSpeaking && uiScene === "focus") {
+            setUiScene("scan");
+        }
+    }, [isAgentSpeaking, uiScene]);
+
     const handleMicTap = useCallback(async () => {
         if (isRecording || isConnected) {
             // If agent is speaking, interrupt it first for a clean stop
@@ -182,7 +213,7 @@ export function ChatInterface() {
     // View: HOME DASHBOARD (Idle)
     if (!isListening && inputMode === "voice") {
         return (
-            <div className="relative flex flex-col h-screen text-white bg-gradient-to-b from-[#070b11] via-[#090f19] to-[#05070d] font-sans selection:bg-cyan-500/30 overflow-hidden">
+            <div className={`relative flex flex-col h-screen text-white bg-gradient-to-b from-[#070b11] via-[#090f19] to-[#05070d] font-sans selection:bg-cyan-500/30 overflow-hidden scene-shell scene-${uiScene}`}>
                 <IdeaDropAnimation ideas={savedIdeas} trigger={ideaDropTrigger} />
                 <div className="pointer-events-none absolute -top-20 -left-24 w-80 h-80 bg-cyan-500/15 blur-3xl rounded-full" />
                 <div className="pointer-events-none absolute top-16 right-0 w-96 h-96 bg-indigo-500/10 blur-3xl rounded-full" />
@@ -303,6 +334,13 @@ export function ChatInterface() {
                             <p className="text-sm text-white/80 mt-2 leading-relaxed">Use desktop screen sharing or mobile camera sharing for visual code walkthroughs.</p>
                         </div>
                     </div>
+
+                    <div className="pb-8 flex flex-wrap gap-2">
+                        <button onClick={() => setUiScene("focus")} className="px-3 py-1.5 rounded-full text-xs bg-white/5 border border-white/15 hover:bg-white/10 transition-colors">Focus Scene</button>
+                        <button onClick={() => setUiScene("scan")} className="px-3 py-1.5 rounded-full text-xs bg-cyan-500/10 border border-cyan-300/25 hover:bg-cyan-500/20 transition-colors">Scan Scene</button>
+                        <button onClick={() => setUiScene("diagnose")} className="px-3 py-1.5 rounded-full text-xs bg-amber-500/10 border border-amber-300/25 hover:bg-amber-500/20 transition-colors">Diagnose Scene</button>
+                        <button onClick={() => setUiScene("vault")} className="px-3 py-1.5 rounded-full text-xs bg-emerald-500/10 border border-emerald-300/25 hover:bg-emerald-500/20 transition-colors">Vault Scene</button>
+                    </div>
                 </div>
 
                 {/* Hidden File Input */}
@@ -363,7 +401,7 @@ export function ChatInterface() {
 
     // View: LISTENING / TEXT CHAT / ACTIVE
     return (
-        <div className="relative flex flex-col h-screen text-white bg-gradient-to-b from-[#070b11] via-[#090f19] to-[#05070d] font-sans overflow-hidden selection:bg-cyan-500/30">
+        <div className={`relative flex flex-col h-screen text-white bg-gradient-to-b from-[#070b11] via-[#090f19] to-[#05070d] font-sans overflow-hidden selection:bg-cyan-500/30 scene-shell scene-${uiScene}`}>
             <IdeaDropAnimation ideas={savedIdeas} trigger={ideaDropTrigger} />
             <div className="pointer-events-none absolute -top-20 right-0 w-80 h-80 bg-cyan-500/10 blur-3xl rounded-full" />
             {/* Top App Bar */}
@@ -556,6 +594,16 @@ export function ChatInterface() {
                                 <MonitorUp className="w-4 h-4" />
                             </button>
                             <button
+                                onClick={() => {
+                                    setUiScene("diagnose");
+                                    requestScreenCodeReview();
+                                }}
+                                className="w-9 h-9 flex items-center justify-center rounded-full text-cyan-100/45 hover:text-cyan-100 hover:bg-cyan-500/10 transition-colors"
+                                title="Read currently shared code"
+                            >
+                                <Bug className="w-4 h-4" />
+                            </button>
+                            <button
                                 onClick={() => setShowWhiteboard(true)}
                                 className="w-9 h-9 flex items-center justify-center rounded-full text-cyan-100/45 hover:text-cyan-100 hover:bg-cyan-500/10 transition-colors"
                                 title="Open Whiteboard"
@@ -623,6 +671,16 @@ export function ChatInterface() {
                                 title={isScreenSharing ? "Stop visual sharing" : "Share screen/camera"}
                             >
                                 <MonitorUp className={`w-5 h-5 ${isScreenSharing ? 'animate-pulse' : ''}`} />
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setUiScene("diagnose");
+                                    requestScreenCodeReview();
+                                }}
+                                className="w-12 h-12 rounded-full border border-cyan-200/20 bg-[#0b1624]/85 backdrop-blur-xl flex items-center justify-center hover:bg-cyan-500/10 hover:border-cyan-100/30 transition-colors group shadow-lg"
+                                title="Analyze visible shared code"
+                            >
+                                <Bug className="w-5 h-5 text-cyan-100/60 group-hover:text-amber-200" />
                             </button>
                             <button
                                 onClick={handleMicTap}

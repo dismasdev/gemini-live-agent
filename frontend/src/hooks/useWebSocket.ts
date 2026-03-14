@@ -105,6 +105,11 @@ export function useWebSocket() {
     const [visualShareMode, setVisualShareMode] = useState<VisualShareMode>(null);
     const screenStreamRef = useRef<MediaStream | null>(null);
     const screenIntervalRef = useRef<number | null>(null);
+    const captureVideoRef = useRef<HTMLVideoElement | null>(null);
+    const captureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const captureCtxRef = useRef<CanvasRenderingContext2D | null>(null);
+    const isScreenSharingRef = useRef(false);
+    const visualHintPendingRef = useRef(false);
 
     // Audio player refs
     const audioContextRef = useRef<AudioContext | null>(null);
@@ -379,6 +384,41 @@ export function useWebSocket() {
         }
     }, []);
 
+    const sendVisualFrame = useCallback(async (quality: number = 0.85) => {
+        if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+        const video = captureVideoRef.current;
+        const canvas = captureCanvasRef.current;
+        const ctx = captureCtxRef.current;
+        if (!video || !canvas || !ctx) return;
+        if (!video.videoWidth || !video.videoHeight) return;
+
+        canvas.width = Math.min(video.videoWidth, 1600);
+        canvas.height = Math.min(
+            video.videoHeight,
+            Math.round((canvas.width / video.videoWidth) * video.videoHeight)
+        );
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        const blob = await new Promise<Blob | null>((resolve) =>
+            canvas.toBlob((b) => resolve(b), "image/jpeg", quality)
+        );
+        if (!blob) return;
+
+        const base64Data = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve((reader.result as string).split(",")[1]);
+            reader.readAsDataURL(blob);
+        });
+
+        wsRef.current.send(
+            JSON.stringify({
+                type: "image",
+                data: base64Data,
+                mimeType: "image/jpeg",
+            })
+        );
+    }, []);
+
     // -----------------------------------------------------------------------
     // Connect (with auto-reconnect on unexpected disconnects)
     // -----------------------------------------------------------------------
@@ -409,6 +449,17 @@ export function useWebSocket() {
                 reconnectAttemptsRef.current = 0;
                 isConnectingRef.current = false;
                 console.log("[WS] Connected to Nora agent");
+
+                if (isScreenSharingRef.current && visualHintPendingRef.current) {
+                    ws.send(
+                        JSON.stringify({
+                            type: "text",
+                            text: "I am sharing my screen. Please read the visible code carefully and point out bugs, risky patterns, and quick fixes.",
+                        })
+                    );
+                    visualHintPendingRef.current = false;
+                    void sendVisualFrame(0.9);
+                }
 
                 // Play premium connection chime natively (no audio files needed)
                 try {
@@ -647,6 +698,11 @@ export function useWebSocket() {
         }
         setIsScreenSharing(false);
         setVisualShareMode(null);
+        isScreenSharingRef.current = false;
+        visualHintPendingRef.current = false;
+        captureVideoRef.current = null;
+        captureCanvasRef.current = null;
+        captureCtxRef.current = null;
     }, []);
 
     const startCameraShare = useCallback(async () => {
@@ -661,9 +717,12 @@ export function useWebSocket() {
             screenStreamRef.current = stream;
             setIsScreenSharing(true);
             setVisualShareMode("camera");
+            isScreenSharingRef.current = true;
+            visualHintPendingRef.current = true;
 
             if (wsRef.current?.readyState === WebSocket.OPEN) {
                 sendText("Screen sharing is unavailable, so I am sharing live camera feed for visual code/bug analysis.");
+                visualHintPendingRef.current = false;
             }
 
             const video = document.createElement("video");
@@ -673,6 +732,11 @@ export function useWebSocket() {
 
             const canvas = document.createElement("canvas");
             const ctx = canvas.getContext("2d")!;
+            captureVideoRef.current = video;
+            captureCanvasRef.current = canvas;
+            captureCtxRef.current = ctx;
+
+            await sendVisualFrame(0.8);
 
             screenIntervalRef.current = window.setInterval(async () => {
                 if (!screenStreamRef.current?.active) {
@@ -682,36 +746,8 @@ export function useWebSocket() {
 
                 // Prevent visual frame spam from interrupting active speech turns.
                 if (isAgentSpeaking) return;
-
-                if (!video.videoWidth || !video.videoHeight) return;
-
-                canvas.width = Math.min(video.videoWidth, 1280);
-                canvas.height = Math.min(
-                    video.videoHeight,
-                    Math.round((1280 / video.videoWidth) * video.videoHeight)
-                );
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-                const blob = await new Promise<Blob>((resolve) =>
-                    canvas.toBlob((b) => resolve(b!), "image/jpeg", 0.5)
-                );
-
-                const base64Data = await new Promise<string>((resolve) => {
-                    const reader = new FileReader();
-                    reader.onload = () => resolve((reader.result as string).split(",")[1]);
-                    reader.readAsDataURL(blob);
-                });
-
-                if (wsRef.current?.readyState === WebSocket.OPEN) {
-                    wsRef.current.send(
-                        JSON.stringify({
-                            type: "image",
-                            data: base64Data,
-                            mimeType: "image/jpeg",
-                        })
-                    );
-                }
-            }, 5000);
+                await sendVisualFrame(0.75);
+            }, 3000);
 
             stream.getVideoTracks()[0].onended = () => {
                 stopScreenShare();
@@ -737,9 +773,12 @@ export function useWebSocket() {
             screenStreamRef.current = stream;
             setIsScreenSharing(true);
             setVisualShareMode("screen");
+            isScreenSharingRef.current = true;
+            visualHintPendingRef.current = true;
 
             if (wsRef.current?.readyState === WebSocket.OPEN) {
-                sendText("I am sharing my screen now.");
+                sendText("I am sharing my screen now. Please read the visible code and give bug-focused feedback.");
+                visualHintPendingRef.current = false;
             }
 
             const video = document.createElement("video");
@@ -748,44 +787,20 @@ export function useWebSocket() {
 
             const canvas = document.createElement("canvas");
             const ctx = canvas.getContext("2d")!;
+            captureVideoRef.current = video;
+            captureCanvasRef.current = canvas;
+            captureCtxRef.current = ctx;
 
-            // Send a frame every 2 seconds
+            await sendVisualFrame(0.9);
+
+            // High-frequency + high-quality frames for better code readability.
             screenIntervalRef.current = window.setInterval(async () => {
                 if (!screenStreamRef.current?.active) {
                     stopScreenShare();
                     return;
                 }
-
-                // Prevent visual frame spam from interrupting active speech turns.
-                if (isAgentSpeaking) return;
-
-                canvas.width = Math.min(video.videoWidth, 1280);
-                canvas.height = Math.min(
-                    video.videoHeight,
-                    Math.round((1280 / video.videoWidth) * video.videoHeight)
-                );
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-                const blob = await new Promise<Blob>((resolve) =>
-                    canvas.toBlob((b) => resolve(b!), "image/jpeg", 0.5)
-                );
-
-                const base64Data = await new Promise<string>((resolve) => {
-                    const r = new FileReader();
-                    r.onload = () => resolve((r.result as string).split(",")[1]);
-                    r.readAsDataURL(blob);
-                });
-
-                if (wsRef.current?.readyState === WebSocket.OPEN) {
-                    wsRef.current.send(
-                        JSON.stringify({
-                            type: "image",
-                            data: base64Data,
-                            mimeType: "image/jpeg",
-                        })
-                    );
-                }
-            }, 5000);
+                await sendVisualFrame(0.85);
+            }, 1800);
 
             // Handle user stopping screen share via browser UI
             stream.getVideoTracks()[0].onended = () => {
@@ -795,7 +810,16 @@ export function useWebSocket() {
             console.error("Screen share failed, trying camera fallback:", err);
             await startCameraShare();
         }
-    }, [sendText, stopScreenShare, startCameraShare, isAgentSpeaking]);
+    }, [sendText, stopScreenShare, startCameraShare, sendVisualFrame]);
+
+    const requestScreenCodeReview = useCallback(async () => {
+        if (!isScreenSharingRef.current) {
+            sendText("I want to share my screen for code review. Prompt me to start screen sharing.");
+            return;
+        }
+        sendText("Please analyze the currently visible code from my shared screen. Focus on bugs, edge cases, and concrete fixes.");
+        await sendVisualFrame(0.92);
+    }, [sendText, sendVisualFrame]);
 
     const toggleScreenShare = useCallback(() => {
         if (isScreenSharing) stopScreenShare();
@@ -852,6 +876,7 @@ export function useWebSocket() {
         sendImage,
         interruptAgent,
         toggleScreenShare,
+        requestScreenCodeReview,
         isScreenSharing,
         visualShareMode,
     };
